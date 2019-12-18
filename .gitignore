@@ -1,6 +1,6 @@
 .vs/
 .git/
-LICENSE
-README.md
 *.cache
 obj/
+README.md
+LICENSE
