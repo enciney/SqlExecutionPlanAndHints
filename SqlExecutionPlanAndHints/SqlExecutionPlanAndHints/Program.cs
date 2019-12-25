@@ -2,6 +2,10 @@
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using NHibernate;
+using NHibernate.Cfg.MappingSchema;
+using NHibernate.Id;
+using NHibernate.Mapping.ByCode;
+using NHibernate.Tool.hbm2ddl;
 using System;
 using System.Configuration;
 using System.IO;
@@ -21,7 +25,6 @@ namespace SqlExecutionPlanAndHints
 
 		static void StartUpActions()
 		{
-
 			// .netCore itself Dependency Injection
 			var serviceProvider = new ServiceCollection()
 				.AddSingleton<IConfigurationBuilder>(new ConfigurationBuilder()
@@ -48,11 +51,34 @@ namespace SqlExecutionPlanAndHints
 			// try to configure nHibernate
 			var configurationObj = new NHibernate.Cfg.Configuration();
 			var nhConfiguration = nhConfigPath == null ? configurationObj.Configure() : configurationObj.Configure(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, nhConfigPath));
-
+		
 			sessionFactory = nhConfiguration.BuildSessionFactory();
 			var session = sessionFactory.OpenSession();
-			var count = session.CreateSQLQuery("select count(*) from all_cells").List();
-			session.Close();
+			if (!TableExist(session, "ALL_RND_CELLS"))
+			{
+				CeateInitialData(nhConfiguration);
+			}
+			// addAssembly for xml based mappings
+			
+			
+		}
+
+
+		static bool TableExist(ISession session, string tableName)
+		{
+			var query = session.CreateSQLQuery($"select count(*) from user_tables where table_name in ('{tableName.ToLower()}','{tableName.ToUpper()}') ");
+			var result = query.UniqueResult().ToString();
+			return int.Parse(result) > 0 ? true : false; 
+		}
+
+		static bool CeateInitialData(NHibernate.Cfg.Configuration conf)
+		{
+			
+			var modelMapper = new ModelMapper();
+			modelMapper.AddMapping<DataMapping>();
+			conf.AddMapping(modelMapper.CompileMappingForAllExplicitlyAddedEntities());
+			new SchemaExport(conf).Create(true, true);
+			return false;
 		}
 	}
 }
