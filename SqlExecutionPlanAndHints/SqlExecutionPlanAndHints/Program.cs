@@ -5,21 +5,65 @@ using NHibernate;
 using NHibernate.Cfg.MappingSchema;
 using NHibernate.Id;
 using NHibernate.Mapping.ByCode;
+using NHibernate.Persister.Entity;
 using NHibernate.Tool.hbm2ddl;
 using System;
+using System.Collections.Generic;
 using System.Configuration;
 using System.IO;
+using System.Linq;
+using NhConfiguration = NHibernate.Cfg.Configuration;
+using NhTable = NHibernate.Mapping.Table;
 
 namespace SqlExecutionPlanAndHints
 {
 	
 	class Program
 	{
+		enum DataMode
+		{
+			Nothing = 0,
+			Truncate,
+			Drop,
+			
+		}
+		static DataMode SessionDataMode;
+		static readonly int ROWCOUNT = 2000;
+		static readonly int CELLLENGTH = 6;
 		static IConfigurationRoot appConfig { get; set; }
 		static ISessionFactory sessionFactory { get; set; }
+
+		static NhConfiguration nhConfig;
+
+		// -t mean truncate all table and reset sequence
+		// -d drop all data from database
+		// if no argument then default behaviour applied (nothing to do)
 		static void Main(string[] args)
 		{
+			var argumentLength = args.Length;
+			if (argumentLength == 1 )
+			{
+				var truncateMode = "-t";
+				var dropMode = "-d";
+				var param1 = args[0].ToLowerInvariant();
+				if (param1.StartsWith(truncateMode))
+				{
+					SessionDataMode = DataMode.Truncate;
+				}
+				else if (param1.StartsWith(dropMode))
+				{
+					SessionDataMode = DataMode.Drop;
+				}
+			}
 			StartUpActions();
+			var session = sessionFactory.OpenSession();
+			CeateInitialData(session);
+			// some stuff
+
+			//FinishJob(session);
+			session.Close();
+
+
 		}
 
 
@@ -50,17 +94,12 @@ namespace SqlExecutionPlanAndHints
 			#endregion
 			// try to configure nHibernate
 			var configurationObj = new NHibernate.Cfg.Configuration();
-			var nhConfiguration = nhConfigPath == null ? configurationObj.Configure() : configurationObj.Configure(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, nhConfigPath));
-		
-			sessionFactory = nhConfiguration.BuildSessionFactory();
-			var session = sessionFactory.OpenSession();
-			if (!TableExist(session, "ALL_RND_CELLS"))
-			{
-				CeateInitialData(nhConfiguration);
-			}
-			// addAssembly for xml based mappings
+			nhConfig = nhConfigPath == null ? configurationObj.Configure() : configurationObj.Configure(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, nhConfigPath));
 			
-			
+			var modelMapper = new ModelMapper();
+			modelMapper.AddMapping<DataMapping>();
+			nhConfig.AddMapping(modelMapper.CompileMappingForAllExplicitlyAddedEntities());
+			sessionFactory = nhConfig.BuildSessionFactory();			
 		}
 
 
@@ -71,14 +110,49 @@ namespace SqlExecutionPlanAndHints
 			return int.Parse(result) > 0 ? true : false; 
 		}
 
-		static bool CeateInitialData(NHibernate.Cfg.Configuration conf)
+		static void CeateInitialData(ISession session)
 		{
+			NhTable table = nhConfig.GetClassMapping(typeof(Data)).RootTable;
+			// table and sequence creation
+			if (!TableExist(session, table.Name))
+			{
+				new SchemaExport(nhConfig).Create(true, true);
+			}
+			using (var tx = session.BeginTransaction())
+			{
+				var rowCount = session.Query<Data>().Count();
+				if(rowCount >= ROWCOUNT)
+				{
+					var randomCellNames = RandomString(CELLLENGTH).ToList();
+					randomCellNames.ForEach(s => {
+						var cellData = new Data
+						{
+							Cell = s
+						};
+						session.Save(cellData);
+					});
+
+					tx.Commit();
+				}
 			
-			var modelMapper = new ModelMapper();
-			modelMapper.AddMapping<DataMapping>();
-			conf.AddMapping(modelMapper.CompileMappingForAllExplicitlyAddedEntities());
-			new SchemaExport(conf).Create(true, true);
-			return false;
+			}
+		}
+
+		public static IList<string> RandomString(int length)
+		{
+			IList<string> randomCells = new List<string>();
+			var rowcount = Enumerable.Range(0, ROWCOUNT-1).ToList();
+			
+			Random random = new Random();
+			const string chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+
+			rowcount.ToList().ForEach(c => randomCells.Add(
+				new string(Enumerable.Repeat(chars, length)
+				.Select(s => s[random.Next(s.Length)]).ToArray())
+			));
+
+
+			return randomCells;
 		}
 	}
 }
